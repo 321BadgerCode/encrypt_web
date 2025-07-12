@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>🔐 Browser-Only Text Encryptor</title>
+
+<!-- CryptoJS AES -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+<!-- zxcvbn for password strength -->
+<script src="https://cdn.jsdelivr.net/npm/zxcvbn@4.4.2/dist/zxcvbn.js"></script>
+
+<style>
+	body {
+		background: #000;
+		color: #33ff33;
+		font-family: monospace;
+		margin: 0; padding: 40px 0;
+		display: flex; justify-content: center;
+	}
+	.container {
+		width: 600px;
+		background: #111;
+		border-radius: 12px;
+		padding: 30px;
+		box-shadow: 0 0 20px #00ff00aa;
+		position: relative;
+	}
+	h1 {
+		text-align: center;
+		margin-bottom: 20px;
+		color: #33ff33;
+	}
+	label {
+		font-weight: bold;
+		margin-bottom: 6px;
+		display: block;
+	}
+	textarea:not([readonly]), input[type="password"], input[type="text"] {
+		width: 100%;
+		padding: 12px;
+		margin-bottom: 15px;
+		border-radius: 6px;
+		border: none;
+		background: #000;
+		color: #33ff33;
+		font-family: monospace;
+		font-size: 14px;
+		resize: vertical;
+		outline: none;
+		caret-color: #33ff33;
+	}
+	textarea[readonly] {
+		width: 100%;
+		padding: 12px;
+		margin-bottom: 15px;
+		border-radius: 6px;
+		border: 1px solid #33ff33;
+		background: #000;
+		color: #33ff33;
+		font-family: monospace;
+		font-size: 14px;
+		resize: vertical;
+		outline: none;
+		caret-color: transparent;
+	}
+	input::placeholder, textarea::placeholder {
+		color: #227722;
+	}
+	.buttons {
+		display: flex;
+		justify-content: space-between;
+	}
+	button {
+		background-color: #33ff33;
+		color: #000;
+		border: none;
+		padding: 12px 25px;
+		font-size: 16px;
+		border-radius: 6px;
+		cursor: pointer;
+		transition: background 0.3s ease;
+	}
+	button:hover {
+		background-color: #228822;
+	}
+	.copy-btn {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+		background: #228822dd;
+		color: #000;
+		padding: 6px 12px;
+		font-size: 14px;
+		border-radius: 6px;
+		cursor: pointer;
+		border: none;
+		transition: background 0.3s ease;
+		user-select: none;
+		z-index: 10;
+	}
+	.copy-btn:hover {
+		background: #33ff33;
+	}
+	.counter {
+		font-size: 12px;
+		text-align: right;
+		color: #227722;
+		margin-top: -10px;
+		margin-bottom: 15px;
+	}
+	#drop-area {
+		border: 2px dashed #227722;
+		border-radius: 10px;
+		padding: 20px;
+		text-align: center;
+		color: #227722;
+		margin-bottom: 20px;
+		transition: background-color 0.3s ease;
+	}
+	#drop-area.dragover {
+		background-color: #003300;
+		color: #55ff55;
+	}
+	#entropy-bar {
+		height: 12px;
+		border-radius: 6px;
+		background: #003300;
+		margin-top: 5px;
+		margin-bottom: 15px;
+		overflow: hidden;
+	}
+	#entropy-fill {
+		height: 100%;
+		width: 0;
+		background: #f44336;
+		transition: width 0.3s ease, background-color 0.3s ease;
+	}
+	#strength-label {
+		text-align: right;
+		font-size: 12px;
+		margin-top: -18px;
+		margin-bottom: 10px;
+		color: #33ff33;
+	}
+</style>
+</head>
+<body>
+
+<div class="container">
+	<h1>🔐 Browser-Only Text Encryptor</h1>
+
+	<label for="password">Password / Key:</label>
+	<input type="password" id="password" placeholder="Enter your password or key" autocomplete="new-password" />
+
+	<div id="entropy-bar" title="Password entropy">
+		<div id="entropy-fill"></div>
+	</div>
+	<div id="strength-label">Strength: </div>
+
+	<label for="text-input">Text to encrypt/decrypt:</label>
+	<textarea id="text-input" placeholder="Type or drop text here..." spellcheck="false"></textarea>
+	<div class="counter" id="char-counter">0 characters, 0 bytes</div>
+
+	<div id="drop-area">Drag & Drop text files here to encrypt/decrypt</div>
+
+	<div class="buttons">
+		<button id="encrypt-btn">Encrypt</button>
+		<button id="decrypt-btn">Decrypt</button>
+	</div>
+
+	<label for="result">Result:</label>
+	<textarea id="result" readonly spellcheck="false"></textarea>
+	<button class="copy-btn" id="copy-btn" title="Copy to clipboard">Copy</button>
+</div>
+
+<script>
+	const passwordInput = document.getElementById("password");
+	const textInput = document.getElementById("text-input");
+	const resultArea = document.getElementById("result");
+	const charCounter = document.getElementById("char-counter");
+	const entropyFill = document.getElementById("entropy-fill");
+	const strengthLabel = document.getElementById("strength-label");
+	const copyBtn = document.getElementById("copy-btn");
+	const dropArea = document.getElementById("drop-area");
+	const encryptBtn = document.getElementById("encrypt-btn");
+	const decryptBtn = document.getElementById("decrypt-btn");
+
+	// Clipboard copy
+	copyBtn.onclick = () => {
+		if (!resultArea.value) return alert("Nothing to copy!");
+		navigator.clipboard.writeText(resultArea.value).then(() => {
+			alert("Copied to clipboard!");
+		});
+	};
+
+	// Character and byte count
+	function updateCounter() {
+		const val = textInput.value;
+		const encoder = new TextEncoder();
+		const bytes = encoder.encode(val).length;
+		charCounter.textContent = `${val.length} characters, ${bytes} bytes`;
+	}
+	textInput.addEventListener("input", () => {
+		updateCounter();
+		clearResultAnimation();
+	});
+	updateCounter();
+
+	// Password entropy calculation
+	function getEntropy(pass) {
+		if (!pass) return 0;
+		const uniqueChars = new Set(pass).size;
+		// Shannon entropy estimate:
+		return pass.length * Math.log2(uniqueChars || 1);
+	}
+
+	// Update entropy bar and strength meter
+	function updateEntropyAndStrength() {
+		const pass = passwordInput.value;
+		const entropy = getEntropy(pass);
+		let width = Math.min(entropy * 5, 100);
+		entropyFill.style.width = width + "%";
+
+		// Color scale
+		if (entropy < 28) entropyFill.style.backgroundColor = "#f44336"; // red
+		else if (entropy < 50) entropyFill.style.backgroundColor = "#ff9800"; // orange
+		else entropyFill.style.backgroundColor = "#8bc34a"; // green
+
+		// Use zxcvbn for strength label
+		const result = zxcvbn(pass);
+		const scores = ["Very Weak", "Weak", "Fair", "Strong", "Excellent"];
+		strengthLabel.textContent = `Strength: ${scores[result.score]}`;
+	}
+	passwordInput.addEventListener("input", updateEntropyAndStrength);
+	updateEntropyAndStrength();
+
+	// Browser-only encrypt/decrypt using CryptoJS AES
+	function encryptText(text, password) {
+		if (!password) {
+			alert("Please enter a password/key!");
+			throw new Error("No password");
+		}
+		return CryptoJS.AES.encrypt(text, password).toString();
+	}
+	function decryptText(ciphertext, password) {
+		if (!password) {
+			alert("Please enter a password/key!");
+			throw new Error("No password");
+		}
+		try {
+			const bytes = CryptoJS.AES.decrypt(ciphertext, password);
+			const originalText = bytes.toString(CryptoJS.enc.Utf8);
+			if (!originalText) throw new Error("Decryption failed");
+			return originalText;
+		} catch (e) {
+			alert("Decryption failed. Check your password and ciphertext.");
+			throw e;
+		}
+	}
+
+	encryptBtn.onclick = () => {
+		try {
+			const encrypted = encryptText(textInput.value, passwordInput.value);
+			resultArea.value = encrypted;
+		} catch {}
+	};
+	decryptBtn.onclick = () => {
+		try {
+			const decrypted = decryptText(textInput.value, passwordInput.value);
+			resultArea.value = decrypted;
+		} catch {}
+	};
+
+	// Drag and drop for files
+	dropArea.addEventListener("dragover", e => {
+		e.preventDefault();
+		dropArea.classList.add("dragover");
+	});
+	dropArea.addEventListener("dragleave", e => {
+		e.preventDefault();
+		dropArea.classList.remove("dragover");
+	});
+	dropArea.addEventListener("drop", e => {
+		e.preventDefault();
+		dropArea.classList.remove("dragover");
+		const files = e.dataTransfer.files;
+		if (files.length === 0) return;
+
+		const file = files[0];
+		const reader = new FileReader();
+		reader.onload = () => {
+			textInput.value = reader.result;
+			updateCounter();
+		};
+		reader.readAsText(file);
+	});
+</script>
+</body>
+</html>
